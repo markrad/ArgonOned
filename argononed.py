@@ -2,6 +2,7 @@
 import smbus
 import RPi.GPIO as GPIO
 import os
+import sys
 import time
 import psutil
 import json
@@ -9,6 +10,7 @@ import os
 import subprocess
 from threading import Thread
 import paho.mqtt.client as mqtt
+import yaml
 
 rev = GPIO.RPI_REVISION
 
@@ -17,15 +19,51 @@ if rev == 2 or rev == 3:
 else:
 	bus = smbus.SMBus(0)
 
-TOPIC = "homeassistant/status/rr-hass"
-MQTT_SERVER = "rr-api"
-MQTT_PORT = 1883
 MQTT_CLIENT = os.uname()[1] + "_stats"
 
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 shutdown_pin=4
 GPIO.setup(shutdown_pin, GPIO.IN,  pull_up_down=GPIO.PUD_DOWN)
+
+
+class Config:
+    def __init__(self, configfile):
+        defaultfan = [{65: 100}, {60: 55}, {55: 10}]
+        with open(configfile) as file:
+            self._config = yaml.load(file, Loader=yaml.FullLoader)
+            mqtt = self._config.get('mqtt', {})
+            self._server = mqtt.get('server', 'localhost')
+            self._port = mqtt.get('port', 1883)
+            self._topic = mqtt.get('topic', 'homeassistant/status/%%hostname%%')
+            self._topic = self._topic.replace('%%hostname%%', os.uname()[1].lower())
+            self._temps = self._config.get('fan', defaultfan)
+            try:
+                self._temps.sort(reverse=True, key=lambda x: (list(x.keys()))[0])
+                for s in self._temps:
+                    int(s[list(s.keys())[0]])
+            except:
+                print(f'Fan values are invalid: {sys.exc_info()[1]} - using deaults')
+                self._temps = defaultfan
+                self._temps.sort(reverse=True, key=lambda x: (list(x.keys()))[0])
+            self._lowtemp = list(self._temps[len(self._temps) - 1].keys())[0]
+
+    def get_topic(self):
+        return self._topic
+
+    def get_port(self):
+        return self._port
+    
+    def get_server(self):
+        return self._server
+
+    def get_speed(self, temp):
+        if temp < self._lowtemp:
+            return 0
+        for s in self._temps:
+            if temp >= list(s.keys())[0]:
+                return s[list(s.keys())[0]]
+        return 0
 
 def shutdown_check():
 	while True:
@@ -39,51 +77,6 @@ def shutdown_check():
 			os.system("reboot")
 		elif pulsetime >=4 and pulsetime <=5:
 			os.system("shutdown now -h")
-
-def get_fanspeed(tempval, configlist):
-	for curconfig in configlist:
-		curpair = curconfig.split("=")
-		tempcfg = float(curpair[0])
-		fancfg = int(float(curpair[1]))
-		if tempval >= tempcfg:
-			return fancfg
-	return 0
-
-def load_config(fname):
-	newconfig = []
-	try:
-		with open(fname, "r") as fp:
-			for curline in fp:
-				if not curline:
-					continue
-				tmpline = curline.strip()
-				if not tmpline:
-					continue
-				if tmpline[0] == "#":
-					continue
-				tmppair = tmpline.split("=")
-				if len(tmppair) != 2:
-					continue
-				tempval = 0
-				fanval = 0
-				try:
-					tempval = float(tmppair[0])
-					if tempval < 0 or tempval > 100:
-						continue
-				except:
-					continue
-				try:
-					fanval = int(float(tmppair[1]))
-					if fanval < 0 or fanval > 100:
-						continue
-				except:
-					continue
-				newconfig.append( "{:5.1f}={}".format(tempval,fanval))
-		if len(newconfig) > 0:
-			newconfig.sort(reverse=True)
-	except:
-		return []
-	return newconfig
 
 def get_readings():
     readings = {
@@ -106,26 +99,19 @@ def get_readings():
     readings["cpuperc"] = psutil.cpu_percent()
     return readings
 
-
 def temp_check():
-	fanconfig = ["65=100", "60=55", "55=10"]
-	tmpconfig = load_config("/etc/argononed.conf")
+	# fanconfig = Config("/etc/argononed.conf")
+	fanconfig = Config("/etc/argond_config.yaml")
 
 	client = mqtt.Client(MQTT_CLIENT)
 	client.loop_start()
-	client.connect(MQTT_SERVER)
+	try:
+		client.connect(fanconfig.get_server(), fanconfig.get_port())
+	except:
+		print(f'Failed to connect to MQTT server: {sys.exc_info()[1]}')
 	
-	readings = {
-		"gputemp": 0,
-		"cputemp": 0,
-		"useddisk": 0,
-		"usedmem": 0,
-		"cpuperc": 0,
-		"fanspeed": 0
-	}
+	readings = {}
 
-	if len(tmpconfig) > 0:
-		fanconfig = tmpconfig
 	address=0x1a
 	prevblock=0
 	while True:
@@ -138,7 +124,7 @@ def temp_check():
 		except IOError:
 			val = 0
 		readings["cputemp"] = val
-		block = get_fanspeed(val, fanconfig)
+		block = fanconfig.get_speed(val)
 		if block < prevblock:
 			time.sleep(30)
 		prevblock = block
@@ -147,7 +133,8 @@ def temp_check():
 		except IOError:
 			temp=""
 		readings["fanspeed"] = block
-		client.publish(TOPIC, json.dumps(readings))
+		if client.is_connected():
+			client.publish(fanconfig.get_topic(), json.dumps(readings))
 		time.sleep(30)
 
 t1 = 0

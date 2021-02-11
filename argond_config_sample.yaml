@@ -1,0 +1,9 @@
+mqtt:
+  topic: "<mqtt topic for publishing>"        # default homeassistant/status/<hostname> (lowercase) %%hostname%% will be replaced by lowercase hostname
+  server: "<mqtt server hostname or IP>"      # default localhost
+  port: 1883                                  # mqtt port number - default 1883
+fan:
+  - 55: 10
+  - 60: 55
+  - 65: 100
+  
