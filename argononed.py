@@ -100,7 +100,6 @@ def get_readings():
     return readings
 
 def temp_check():
-	# fanconfig = Config("/etc/argononed.conf")
 	fanconfig = Config("/etc/argond_config.yaml")
 
 	client = mqtt.Client(MQTT_CLIENT)
