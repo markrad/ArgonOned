@@ -6,7 +6,6 @@ import sys
 import time
 import psutil
 import json
-import os
 import subprocess
 from threading import Thread
 import paho.mqtt.client as mqtt
@@ -15,9 +14,9 @@ import yaml
 rev = GPIO.RPI_REVISION
 
 if rev == 2 or rev == 3:
-	bus = smbus.SMBus(1)
+    bus = smbus.SMBus(1)
 else:
-	bus = smbus.SMBus(0)
+    bus = smbus.SMBus(0)
 
 MQTT_CLIENT = os.uname()[1] + "_stats"
 
@@ -66,17 +65,17 @@ class Config:
         return 0
 
 def shutdown_check():
-	while True:
-		pulsetime = 1
-		GPIO.wait_for_edge(shutdown_pin, GPIO.RISING)
-		time.sleep(0.01)
-		while GPIO.input(shutdown_pin) == GPIO.HIGH:
-			time.sleep(0.01)
-			pulsetime += 1
-		if pulsetime >=2 and pulsetime <=3:
-			os.system("reboot")
-		elif pulsetime >=4 and pulsetime <=5:
-			os.system("shutdown now -h")
+    while True:
+        pulsetime = 1
+        GPIO.wait_for_edge(shutdown_pin, GPIO.RISING)
+        time.sleep(0.01)
+        while GPIO.input(shutdown_pin) == GPIO.HIGH:
+            time.sleep(0.01)
+            pulsetime += 1
+        if pulsetime >=2 and pulsetime <=3:
+            os.system("reboot")
+        elif pulsetime >=4 and pulsetime <=5:
+            os.system("shutdown now -h")
 
 def get_readings():
     readings = {
@@ -100,50 +99,50 @@ def get_readings():
     return readings
 
 def temp_check():
-	fanconfig = Config("/etc/argond_config.yaml")
+    fanconfig = Config("/etc/argond_config.yaml")
 
-	client = mqtt.Client(MQTT_CLIENT)
-	client.loop_start()
-	try:
-		client.connect(fanconfig.get_server(), fanconfig.get_port())
-	except:
-		print(f'Failed to connect to MQTT server: {sys.exc_info()[1]}')
-	
-	readings = {}
+    client = mqtt.Client(MQTT_CLIENT)
+    client.loop_start()
+    try:
+        client.connect(fanconfig.get_server(), fanconfig.get_port())
+    except:
+        print(f'Failed to connect to MQTT server: {sys.exc_info()[1]}')
+    
+    readings = {}
 
-	address=0x1a
-	prevblock=0
-	while True:
-		readings = get_readings()
-		try:
-			tempfp = open("/sys/class/thermal/thermal_zone0/temp", "r")
-			temp = tempfp.readline()
-			tempfp.close()
-			val = float(int(temp)/1000)
-		except IOError:
-			val = 0
-		readings["cputemp"] = val
-		block = fanconfig.get_speed(val)
-		if block < prevblock:
-			time.sleep(30)
-		prevblock = block
-		try:
-			bus.write_byte(address, block)
-		except IOError:
-			temp=""
-		readings["fanspeed"] = block
-		if client.is_connected():
-			client.publish(fanconfig.get_topic(), json.dumps(readings))
-		time.sleep(30)
+    address=0x1a
+    prevblock=0
+    while True:
+        readings = get_readings()
+        try:
+            tempfp = open("/sys/class/thermal/thermal_zone0/temp", "r")
+            temp = tempfp.readline()
+            tempfp.close()
+            val = float(int(temp)/1000)
+        except IOError:
+            val = 0
+        readings["cputemp"] = val
+        block = fanconfig.get_speed(val)
+        if block < prevblock:
+            time.sleep(30)
+        prevblock = block
+        try:
+            bus.write_byte(address, block)
+        except IOError:
+            temp=""
+        readings["fanspeed"] = block
+        if client.is_connected():
+            client.publish(fanconfig.get_topic(), json.dumps(readings))
+        time.sleep(30)
 
 t1 = 0
 t2 = 0
 try:
-	t1 = Thread(target = shutdown_check)
-	t2 = Thread(target = temp_check)
-	t1.start()
-	t2.start()
+    t1 = Thread(target = shutdown_check)
+    t2 = Thread(target = temp_check)
+    t1.start()
+    t2.start()
 except:
-	t1.stop()
-	t2.stop()
-	GPIO.cleanup()
+    t1.stop()
+    t2.stop()
+    GPIO.cleanup()
